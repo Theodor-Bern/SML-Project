@@ -14,6 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.feature_selection import SequentialFeatureSelector
+from sklearn.dummy import DummyClassifier
 
 from xgboost import XGBClassifier
 
@@ -372,10 +373,18 @@ def XGBoost_algorithm():
     
     
 
+def naive_classifier():
+    dummy = DummyClassifier(strategy='most_frequent')
+    dummy.fit(X_train, y_train)
+    y_pred = dummy.predict(X_test)
+    
+    print("Naive Classifier (always predicts majority class):")
+    print(classification_report(y_test, y_pred, target_names=['Low Demand', 'High Demand']))
+
 
 
 
 def main():
-    feature_selection_XGBoost()
-    
+    #feature_selection_XGBoost()
+    naive_classifier()
 main()
