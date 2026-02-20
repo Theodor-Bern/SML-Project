@@ -537,11 +537,46 @@ def logistic_regression():
     print("\nPerformance on test set:")
     print(classification_report(y_test, y_pred, target_names=['Low Demand', 'High Demand']))
 
+def knn_classifier():
+    knn_pipe = Pipeline([
+        ("preprocessor", preprocessor_sensitive),
+        ("classifier", KNeighborsClassifier())
+    ])
+
+    param_grid_knn = {
+        "classifier__n_neighbors": list(range(1, 31)),
+        "classifier__weights": ["uniform", "distance"],
+        "classifier__p": [2],  # 1=Manhattan, 2=Euclidean
+    }
+
+    knn_search = GridSearchCV(
+        estimator=knn_pipe,
+        param_grid=param_grid_knn,
+        scoring="f1",  # F1 for positive class (label=1)
+        cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+        n_jobs=-1,
+        verbose=1
+    )
+
+    knn_search.fit(X_train, y_train)
+
+    best_k = knn_search.best_params_["classifier__n_neighbors"]
+
+    print(f"\nBest hyperparameters:\n{knn_search.best_params_}")
+    print(f"\nBest CV F1 Score: {knn_search.best_score_:.4f}")
+    print(f"\nBest estimator: {knn_search.best_estimator_}")
+    print(f"\nBest K (n_neighbors): {best_k}")
+
+
+    y_pred = knn_search.best_estimator_.predict(X_test)
+    print("\nPerformance on test set:")
+    print(classification_report(y_test, y_pred, target_names=['Low Demand', 'High Demand']))
 
 def main():
-    #feature_selection_XGBoost()
+    feature_selection_XGBoost()
     random_forest()
     XGBoost_algorithm()
     naive_classifier()
     logistic_regression()
+    knn_classifier()
 main()
