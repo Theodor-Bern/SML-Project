@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import GridSearchCV, train_test_split, cross_val_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.metrics import classification_report, roc_auc_score, f1_score, precision_recall_curve
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -381,10 +381,78 @@ def naive_classifier():
     print("Naive Classifier (always predicts majority class):")
     print(classification_report(y_test, y_pred, target_names=['Low Demand', 'High Demand']))
 
+def logistic_regression():
 
+
+    # numeric_features = ['temp', 'humidity', 'windspeed', 'dew', 'precip', 'snowdepth', 'cloudcover', 'visibility']
+    # categorical_features = ['hour_of_day', 'day_of_week', 'month', 'holiday', 'weekday', 'summertime']
+
+
+
+    logistic_pipe = Pipeline([
+        ("preprocessor", preprocessor_sensitive),
+        ("classifier", LogisticRegression(max_iter=20000))
+    ])
+
+    param_grid_logistic= [
+        # 1) L2 with lbfgs (strong default baseline)
+        {
+            "classifier__solver": ["lbfgs"],
+            "classifier__penalty": ["l2"],
+            "classifier__C": [1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000],
+            "classifier__class_weight": [None, "balanced"]
+        },
+
+        # 2) L1/L2 with liblinear (good for L1, typically fast for smaller problems)
+        {
+            "classifier__solver": ["liblinear"],
+            "classifier__penalty": ["l1", "l2"],
+            "classifier__C": [1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000],
+            "classifier__class_weight": [None, "balanced"]
+        },
+
+        # 3) L1/L2 with saga (handles sparse well, flexible)
+        {
+            "classifier__solver": ["saga"],
+            "classifier__penalty": ["l1", "l2"],
+            "classifier__C": [1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000],
+            "classifier__class_weight": [None, "balanced"],
+            "classifier__random_state": [42]
+        },
+
+        # 4) ElasticNet with saga (most flexible regularization)
+        {
+            "classifier__solver": ["saga"],
+            "classifier__penalty": ["elasticnet"],
+            "classifier__l1_ratio": [0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 0.95],
+            "classifier__C": [1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000],
+            "classifier__class_weight": [None, "balanced"],
+            "classifier__random_state": [42],
+
+    }
+    ]
+    linnear_search = GridSearchCV(
+        estimator=logistic_pipe,
+        param_grid=param_grid_logistic,
+        scoring="f1",      # F1 for positive class (label=1)
+        cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
+        n_jobs=-1,
+        verbose=1
+    )
+    linnear_search.fit(X_train, y_train)
+
+    print(f"\nBest hyperparameters:\n{linnear_search.best_params_}")
+    print(f"\nBest CV F1 Score: {linnear_search.best_score_:.4f}")
+    print(f"\nBest estimator: {linnear_search.best_estimator_}")
+
+    y_pred = linnear_search.best_estimator_.predict(X_test)
+    y_proba = linnear_search.best_estimator_.predict_proba(X_test)[:, 1]
+    print("\nPerformance on test set:")
+    print(classification_report(y_test, y_pred, target_names=['Low Demand', 'High Demand']))
 
 
 def main():
     #feature_selection_XGBoost()
     naive_classifier()
+    logistic_regression()
 main()
