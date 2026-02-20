@@ -15,6 +15,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.feature_selection import SequentialFeatureSelector
 from sklearn.dummy import DummyClassifier
+from sklearn.model_selection import cross_val_predict
 
 from xgboost import XGBClassifier
 
@@ -317,33 +318,32 @@ def feature_selection_XGBoost():
         print(f"{name:<20} | {len(features):<6} | {scores.mean():.4f} ± {scores.std():.4f}")
 
 def XGBoost_algorithm():
+    print("XGBoost")
     
-    #We use the features after backward selection, we drop snowdepth and weekday
     xgb_numeric_features = ['temp', 'humidity', 'windspeed', 'dew', 'precip', 'cloudcover', 'visibility']
     xgb_categorical_features = ['hour_of_day', 'day_of_week', 'month', 'holiday', 'summertime']
     
     preprocessor_xgb = ColumnTransformer(transformers=[
-    ('num', SimpleImputer(strategy='median'), xgb_numeric_features),
-    ('cat', SimpleImputer(strategy='constant', fill_value=-1), xgb_categorical_features)
-])
+        ('num', SimpleImputer(strategy='median'), xgb_numeric_features),
+        ('cat', SimpleImputer(strategy='constant', fill_value=-1), xgb_categorical_features)
+    ])
 
     xgb_pipeline = Pipeline([
-        ('preprocessor', preprocessor_xgb),
+        ('preprocessor', preprocessor_tree),
         ('classifier', XGBClassifier(
             eval_metric='logloss',
-            random_state=42,
-            use_label_encoder=False
+            random_state=42
         ))
     ])
 
     xgb_param_grid = {
-        'classifier__n_estimators': [150, 300, 400,500,700,900],
-        'classifier__max_depth': [ 3, 5, 7, 9, 11, 13, 15],
+        'classifier__n_estimators': [150, 300, 400, 500, 700, 900],
+        'classifier__max_depth': [3, 5, 7, 9, 11, 13, 15],
         'classifier__learning_rate': [0.01, 0.02, 0.03, 0.04, 0.05, 0.1],
         'classifier__subsample': [0.7, 0.8, 0.9, 1.0],
         'classifier__colsample_bytree': [0.6, 0.7, 0.8, 0.9],
-        'classifier__min_child_weight': [ 3, 5, 7, 9, 11],
-        'classifier__gamma': [ 0.3, 0.4, 0.5, 0.6, 0.7],
+        'classifier__min_child_weight': [3, 5, 7, 9, 11],
+        'classifier__gamma': [0.3, 0.4, 0.5, 0.6, 0.7],
         'classifier__scale_pos_weight': [1.5, 2, 2.5, 3, 3.5, 4, 4.5]
     }
     cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -351,13 +351,12 @@ def XGBoost_algorithm():
     xgb_search = RandomizedSearchCV(
         xgb_pipeline,
         param_distributions=xgb_param_grid,
-        n_iter=200,     
-        scoring='f1',       
+        n_iter=200,
+        scoring='f1',
         cv=cv_strategy,
         random_state=42,
         verbose=1,
-        n_jobs=-1          
-
+        n_jobs=-1
     )
 
     xgb_search.fit(X_train, y_train)
@@ -368,9 +367,97 @@ def XGBoost_algorithm():
     y_pred = xgb_search.best_estimator_.predict(X_test)
     y_proba = xgb_search.best_estimator_.predict_proba(X_test)[:, 1]
 
-    print("\nPerformance on test set:")
+    print("\n--- Default threshold (0.5) ---")
     print(classification_report(y_test, y_pred, target_names=['Low Demand', 'High Demand']))
-    
+
+    # ============================================================
+    # Threshold optimization (on TRAINING data via CV)
+    # ============================================================
+    y_train_proba = cross_val_predict(
+        xgb_search.best_estimator_, X_train, y_train,
+        cv=cv_strategy, method='predict_proba'
+    )[:, 1]
+
+    precision_cv, recall_cv, thresholds_cv = precision_recall_curve(y_train, y_train_proba)
+    f1_cv = 2 * (precision_cv[:-1] * recall_cv[:-1]) / (precision_cv[:-1] + recall_cv[:-1])
+    best_idx = np.argmax(f1_cv)
+    optimal_threshold = thresholds_cv[best_idx]
+
+    print(f"\nOptimal threshold (from CV): {optimal_threshold:.4f}")
+    print(f"CV F1 at optimal threshold: {f1_cv[best_idx]:.4f}")
+
+    y_pred_tuned = (y_proba >= optimal_threshold).astype(int)
+
+    print(f"\n--- Tuned threshold ({optimal_threshold:.4f}) ---")
+    print(classification_report(y_test, y_pred_tuned, target_names=['Low Demand', 'High Demand']))
+    print(f"ROC-AUC: {roc_auc_score(y_test, y_proba):.4f}")
+
+
+
+
+def random_forest():
+    print("Random forest")
+    rf_pipeline = Pipeline([
+        ('preprocessor', preprocessor_tree),
+        ('classifier', RandomForestClassifier(random_state=42))
+    ])
+
+    rf_param_grid = {
+        'classifier__n_estimators': [100, 200, 300, 500],
+        'classifier__max_depth': [5, 10, 15, 20, None],
+        'classifier__min_samples_split': [2, 5, 10],
+        'classifier__min_samples_leaf': [1, 2, 4],
+        'classifier__max_features': ['sqrt', 'log2', None],
+        'classifier__class_weight': ['balanced', 'balanced_subsample', None]
+    }
+
+    cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    rf_search = RandomizedSearchCV(
+        rf_pipeline,
+        param_distributions=rf_param_grid,
+        n_iter=200,
+        scoring='f1',
+        cv=cv_strategy,
+        random_state=42,
+        verbose=1,
+        n_jobs=-1
+    )
+
+    rf_search.fit(X_train, y_train)
+
+    print(f"\nBest hyperparameters:\n{rf_search.best_params_}")
+    print(f"Best CV F1-score: {rf_search.best_score_:.4f}")
+
+    # ============================================================
+    # Threshold optimization (on TRAINING data via CV)
+    # ============================================================
+    y_train_proba = cross_val_predict(
+        rf_search.best_estimator_, X_train, y_train,
+        cv=cv_strategy, method='predict_proba'
+    )[:, 1]
+
+    precision_cv, recall_cv, thresholds_cv = precision_recall_curve(y_train, y_train_proba)
+    f1_cv = 2 * (precision_cv[:-1] * recall_cv[:-1]) / (precision_cv[:-1] + recall_cv[:-1])
+    best_idx = np.argmax(f1_cv)
+    optimal_threshold = thresholds_cv[best_idx]
+
+    print(f"\nOptimal threshold (from CV): {optimal_threshold:.4f}")
+    print(f"CV F1 at optimal threshold: {f1_cv[best_idx]:.4f}")
+
+    # ============================================================
+    # Final evaluation on test set
+    # ============================================================
+    y_proba = rf_search.best_estimator_.predict_proba(X_test)[:, 1]
+    y_pred_default = rf_search.best_estimator_.predict(X_test)
+    y_pred_tuned = (y_proba >= optimal_threshold).astype(int)
+
+    print("\n--- Default threshold (0.5) ---")
+    print(classification_report(y_test, y_pred_default, target_names=['Low Demand', 'High Demand']))
+
+    print(f"--- Tuned threshold ({optimal_threshold:.4f}) ---")
+    print(classification_report(y_test, y_pred_tuned, target_names=['Low Demand', 'High Demand']))
+    print(f"ROC-AUC: {roc_auc_score(y_test, y_proba):.4f}")
     
 
 def naive_classifier():
@@ -453,6 +540,8 @@ def logistic_regression():
 
 def main():
     #feature_selection_XGBoost()
+    random_forest()
+    XGBoost_algorithm()
     naive_classifier()
     logistic_regression()
 main()
